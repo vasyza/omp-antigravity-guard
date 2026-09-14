@@ -1,26 +1,29 @@
+import { createHash } from "node:crypto";
 import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
-
-// Stable attribute that breaks Antigravity's verbatim string match without busting prompt caches
-const ANTIGRAVITY_TAG = '<system-conventions id="omp">';
 
 function isAntigravity(ctx: ExtensionContext): boolean {
 	const provider = ctx.model?.provider ?? ctx.models.current()?.provider;
 	return provider === "google-antigravity";
 }
 
-function sanitizeString(str: string): string {
-	if (!str.includes("<system-conventions>")) return str;
-	return str.replaceAll("<system-conventions>", ANTIGRAVITY_TAG);
+function getSessionNonce(ctx: ExtensionContext): string {
+	const sessionId = ctx.sessionManager?.getSessionId?.() ?? "default";
+	return createHash("sha256").update(sessionId).digest("hex").slice(0, 8);
 }
 
-function sanitizeValue(value: unknown): unknown {
+function sanitizeString(str: string, nonce: string): string {
+	if (!str.includes("<system-conventions>")) return str;
+	return str.replaceAll("<system-conventions>", `<system-conventions id="${nonce}">`);
+}
+
+function sanitizeValue(value: unknown, nonce: string): unknown {
 	if (typeof value === "string") {
-		return sanitizeString(value);
+		return sanitizeString(value, nonce);
 	}
 	if (Array.isArray(value)) {
 		let changed = false;
 		const next = value.map((item) => {
-			const sanitized = sanitizeValue(item);
+			const sanitized = sanitizeValue(item, nonce);
 			if (sanitized !== item) changed = true;
 			return sanitized;
 		});
@@ -30,7 +33,7 @@ function sanitizeValue(value: unknown): unknown {
 		let changed = false;
 		const next: Record<string, unknown> = {};
 		for (const [k, v] of Object.entries(value)) {
-			const sanitized = sanitizeValue(v);
+			const sanitized = sanitizeValue(v, nonce);
 			if (sanitized !== v) changed = true;
 			next[k] = sanitized;
 		}
@@ -45,8 +48,9 @@ function sanitizeValue(value: unknown): unknown {
  * Scoped strictly to `provider === "google-antigravity"`, leaving all other providers
  * (DeepSeek, Anthropic, OpenAI, etc.) completely untouched so prompt caching is 100% preserved.
  *
- * Uses a stable tag `<system-conventions id="omp">` so that even within Antigravity,
- * the prompt prefix remains consistent and cache-friendly across requests.
+ * Derives an 8-character hex nonce from SHA-256 of the session ID.
+ * This guarantees the system prompt prefix remains 100% identical and cache-friendly
+ * across all turns within a dialogue, while different sessions each receive a unique tag.
  */
 export default function (pi: ExtensionAPI) {
 	// 1. Initial user turn
@@ -54,13 +58,14 @@ export default function (pi: ExtensionAPI) {
 		if (!isAntigravity(ctx)) return undefined;
 
 		if (event.systemPrompt && Array.isArray(event.systemPrompt)) {
+			const nonce = getSessionNonce(ctx);
 			let modified = false;
 			const sanitized = event.systemPrompt.map((prompt: string) => {
 				if (typeof prompt !== "string" || !prompt.includes("<system-conventions>")) {
 					return prompt;
 				}
 				modified = true;
-				return sanitizeString(prompt);
+				return sanitizeString(prompt, nonce);
 			});
 
 			if (modified) {
@@ -74,6 +79,7 @@ export default function (pi: ExtensionAPI) {
 		if (!isAntigravity(ctx)) return undefined;
 		if (!event.payload || typeof event.payload !== "object") return undefined;
 
-		return sanitizeValue(event.payload);
+		const nonce = getSessionNonce(ctx);
+		return sanitizeValue(event.payload, nonce);
 	});
 }
