@@ -7,8 +7,17 @@ function getSessionNonce(ctx: ExtensionContext): string {
 }
 
 function sanitizeString(str: string, nonce: string): string {
-	if (!str.includes("<system-conventions>")) return str;
-	return str.replaceAll("<system-conventions>", `<system-conventions id="${nonce}">`);
+	const hasSystemConventions = str.includes("<system-conventions>");
+	const hasConventions = str.includes("<conventions>");
+	if (!hasSystemConventions && !hasConventions) return str;
+	let result = str;
+	if (hasSystemConventions) {
+		result = result.replaceAll("<system-conventions>", `<system-conventions id="${nonce}">`);
+	}
+	if (hasConventions) {
+		result = result.replaceAll("<conventions>", `<conventions id="${nonce}">`);
+	}
+	return result;
 }
 
 function sanitizeValue(value: unknown, nonce: string): unknown {
@@ -53,7 +62,10 @@ export default function (pi: ExtensionAPI) {
 			const nonce = getSessionNonce(ctx);
 			let modified = false;
 			const sanitized = event.systemPrompt.map((prompt: string) => {
-				if (typeof prompt !== "string" || !prompt.includes("<system-conventions>")) {
+				if (
+					typeof prompt !== "string" ||
+					(!prompt.includes("<system-conventions>") && !prompt.includes("<conventions>"))
+				) {
 					return prompt;
 				}
 				modified = true;

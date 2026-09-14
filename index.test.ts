@@ -122,10 +122,32 @@ describe("omp-antigravity-guard", () => {
 				},
 			],
 		};
-
 		const res = (await beforeProviderRequest({ payload }, fakeCtx)) as any;
 		expect(res.contents[0].parts[0].text).toBe(
 			`<system-conventions id="${expectedNonce}"> rules </system-conventions>`,
 		);
+	});
+
+	it("sanitizes <conventions> tag (OMP 18.1.21+)", async () => {
+		const handlers = new Map<string, Function>();
+		plugin({
+			on: (event: string, handler: Function) => {
+				handlers.set(event, handler);
+			},
+		} as any);
+
+		const fakeCtx = {
+			model: { provider: "google-antigravity" },
+			models: { current: () => ({ provider: "google-antigravity" }) },
+			sessionManager: { getSessionId: () => "session-conv" },
+		};
+
+		const expectedNonce = createHash("sha256").update("session-conv").digest("hex").slice(0, 8);
+		const beforeAgentStart = handlers.get("before_agent_start")!;
+		const res = await beforeAgentStart(
+			{ systemPrompt: ["<conventions>\nRFC 2119\n</conventions>"] },
+			fakeCtx,
+		);
+		expect(res?.systemPrompt?.[0]).toBe(`<conventions id="${expectedNonce}">\nRFC 2119\n</conventions>`);
 	});
 });
