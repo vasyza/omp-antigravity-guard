@@ -1,9 +1,16 @@
-import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@oh-my-pi/pi-coding-agent";
+
+// Stable attribute that breaks Antigravity's verbatim string match without busting prompt caches
+const ANTIGRAVITY_TAG = '<system-conventions id="omp">';
+
+function isAntigravity(ctx: ExtensionContext): boolean {
+	const provider = ctx.model?.provider ?? ctx.models.current()?.provider;
+	return provider === "google-antigravity";
+}
 
 function sanitizeString(str: string): string {
 	if (!str.includes("<system-conventions>")) return str;
-	const nonce = Math.random().toString(16).slice(2, 10);
-	return str.replaceAll("<system-conventions>", `<system-conventions id="${nonce}">`);
+	return str.replaceAll("<system-conventions>", ANTIGRAVITY_TAG);
 }
 
 function sanitizeValue(value: unknown): unknown {
@@ -35,16 +42,17 @@ function sanitizeValue(value: unknown): unknown {
 /**
  * Oh My Pi extension that prevents Antigravity from hitting synthetic 429 errors.
  *
- * Antigravity proxies trigger an intentional 429 ("You have exhausted your capacity on this model...")
- * when the exact prompt contains `<system-conventions>`.
+ * Scoped strictly to `provider === "google-antigravity"`, leaving all other providers
+ * (DeepSeek, Anthropic, OpenAI, etc.) completely untouched so prompt caching is 100% preserved.
  *
- * This extension hooks:
- * 1. `before_agent_start`: sanitizes the system prompt when a user enters a new prompt.
- * 2. `before_provider_request`: sanitizes the outgoing wire payload on EVERY LLM request,
- *    including in-place retries via F5 / `app.retry` (`agent.continue()`), auto-retries, and subagents.
+ * Uses a stable tag `<system-conventions id="omp">` so that even within Antigravity,
+ * the prompt prefix remains consistent and cache-friendly across requests.
  */
 export default function (pi: ExtensionAPI) {
-	pi.on("before_agent_start", async (event) => {
+	// 1. Initial user turn
+	pi.on("before_agent_start", async (event, ctx) => {
+		if (!isAntigravity(ctx)) return undefined;
+
 		if (event.systemPrompt && Array.isArray(event.systemPrompt)) {
 			let modified = false;
 			const sanitized = event.systemPrompt.map((prompt: string) => {
@@ -61,8 +69,11 @@ export default function (pi: ExtensionAPI) {
 		}
 	});
 
-	pi.on("before_provider_request", async (event) => {
+	// 2. Outgoing wire payload (including F5 / retry / continue)
+	pi.on("before_provider_request", async (event, ctx) => {
+		if (!isAntigravity(ctx)) return undefined;
 		if (!event.payload || typeof event.payload !== "object") return undefined;
+
 		return sanitizeValue(event.payload);
 	});
 }
