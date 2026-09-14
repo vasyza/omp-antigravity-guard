@@ -1,6 +1,6 @@
 {
   "name": "omp-antigravity-guard",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Oh My Pi plugin to prevent Antigravity synthetic 429 quota errors",
   "type": "module",
   "main": "index.ts",

@@ -67,7 +67,7 @@ describe("omp-antigravity-guard", () => {
 		);
 	});
 
-	it("does not modify prompts for other providers like deepseek or anthropic", async () => {
+	it("sanitizes system-conventions for any provider (DeepSeek, Claude, etc.) preserving cache within session", async () => {
 		const handlers = new Map<string, Function>();
 		plugin({
 			on: (event: string, handler: Function) => {
@@ -78,9 +78,10 @@ describe("omp-antigravity-guard", () => {
 		const fakeCtxDeepseek = {
 			model: { provider: "deepseek" },
 			models: { current: () => ({ provider: "deepseek" }) },
-			sessionManager: { getSessionId: () => "session-1" },
+			sessionManager: { getSessionId: () => "deepseek-session" },
 		};
 
+		const expectedNonce = createHash("sha256").update("deepseek-session").digest("hex").slice(0, 8);
 		const beforeAgentStart = handlers.get("before_agent_start")!;
 		const beforeProviderRequest = handlers.get("before_provider_request")!;
 
@@ -88,13 +89,13 @@ describe("omp-antigravity-guard", () => {
 			{ systemPrompt: ["<system-conventions> test </system-conventions>"] },
 			fakeCtxDeepseek,
 		);
-		expect(res).toBeUndefined();
+		expect(res?.systemPrompt?.[0]).toBe(`<system-conventions id="${expectedNonce}"> test </system-conventions>`);
 
-		const payloadRes = await beforeProviderRequest(
+		const payloadRes = (await beforeProviderRequest(
 			{ payload: { prompt: "<system-conventions> test </system-conventions>" } },
 			fakeCtxDeepseek,
-		);
-		expect(payloadRes).toBeUndefined();
+		)) as any;
+		expect(payloadRes?.prompt).toBe(`<system-conventions id="${expectedNonce}"> test </system-conventions>`);
 	});
 
 	it("sanitizes outgoing payload on before_provider_request (F5/retry/continue)", async () => {
@@ -106,8 +107,8 @@ describe("omp-antigravity-guard", () => {
 		} as any);
 
 		const fakeCtx = {
-			model: { provider: "google-antigravity" },
-			models: { current: () => ({ provider: "google-antigravity" }) },
+			model: { provider: "anthropic" },
+			models: { current: () => ({ provider: "anthropic" }) },
 			sessionManager: { getSessionId: () => "session-abc" },
 		};
 
